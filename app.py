@@ -64,27 +64,36 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-def extract_text_from_docx(file_bytes: bytes) -> str:
-    """从DOCX文件中提取纯文本，支持HTML格式的.doc文件"""
+def extract_text_from_doc(file_bytes: bytes) -> str:
+    """
+    从DOC/DOCX文件中提取纯文本
+    优先尝试作为HTML格式读取（.doc文件通常是HTML格式）
+    然后尝试作为标准DOCX读取
+    """
+    # 首先尝试作为HTML读取（.doc文件的实际格式）
     try:
-        # 尝试作为DOCX读取
+        html_content = file_bytes.decode('utf-8', errors='ignore')
+        if '<html' in html_content.lower() or '<body' in html_content.lower():
+            soup = BeautifulSoup(html_content, 'html.parser')
+            body = soup.find('body')
+            if body:
+                return body.get_text(separator='\n')
+            return html_content
+    except:
+        pass
+    
+    # 尝试作为标准DOCX读取
+    try:
         doc = Document(io.BytesIO(file_bytes))
         full_text = []
         for para in doc.paragraphs:
             full_text.append(para.text)
         return '\n'.join(full_text)
     except:
-        # 如果失败，尝试作为HTML读取（.doc文件实际是HTML格式）
-        try:
-            html_content = file_bytes.decode('utf-8', errors='ignore')
-            soup = BeautifulSoup(html_content, 'html.parser')
-            body = soup.find('body')
-            if body:
-                return body.get_text(separator='\n')
-            return html_content
-        except Exception as e:
-            st.error(f"无法读取文件: {str(e)}")
-            return ""
+        pass
+    
+    # 如果都失败，返回空字符串
+    return ""
 
 
 def extract_text_from_txt(file_bytes: bytes) -> str:
@@ -107,9 +116,29 @@ def parse_script(script_content: str) -> dict:
     """
     解析逐字稿内容，返回 {slide_index: content} 的字典
     使用 ### Slide X 作为分隔符
+    
+    注意：保留 <break time="X.Xs" /> 标签不移除
     """
-    # 移除HTML标签
+    # 先提取并保存 <break time="..." /> 标签
+    break_time_tags = {}
+    counter = 0
+    
+    def save_break_time(match):
+        nonlocal counter
+        placeholder = f"__BREAK_TIME_{counter}__"
+        break_time_tags[placeholder] = match.group(0)
+        counter += 1
+        return placeholder
+    
+    # 临时替换 break time 标签
+    script_content = re.sub(r'<break time="[^"]*" */?>', save_break_time, script_content, flags=re.IGNORECASE)
+    
+    # 移除其他HTML标签
     script_content = re.sub(r'<[^>]+>', '', script_content)
+    
+    # 恢复 break time 标签
+    for placeholder, original_tag in break_time_tags.items():
+        script_content = script_content.replace(placeholder, original_tag)
     
     # 使用正则表达式匹配 ### Slide X
     pattern = r'###\s*Slide\s*(\d+)'
@@ -202,6 +231,9 @@ st.markdown("""
         <code>### Slide 2</code><br>
         第二页的内容...
     </p>
+    <p style="margin-top: 10px; color: #666;">
+        支持文件格式：.txt, .doc, .docx
+    </p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -214,7 +246,8 @@ with col1:
 
 with col2:
     st.subheader("📝 上传逐字稿")
-    script_file = st.file_uploader("选择逐字稿文件", type=['txt', 'docx'], key='script')
+    # 支持 txt, doc, docx 三种格式
+    script_file = st.file_uploader("选择逐字稿文件", type=['txt', 'doc', 'docx'], key='script')
 
 # 处理按钮
 if st.button("🚀 开始处理"):
@@ -228,8 +261,9 @@ if st.button("🚀 开始处理"):
                 # 读取逐字稿
                 script_content = script_file.read()
                 
-                if script_file.name.endswith('.docx') or script_file.name.endswith('.doc'):
-                    script_text = extract_text_from_docx(script_content)
+                # 根据文件类型选择读取方式
+                if script_file.name.endswith(('.doc', '.docx')):
+                    script_text = extract_text_from_doc(script_content)
                 else:
                     script_text = extract_text_from_txt(script_content)
                 
