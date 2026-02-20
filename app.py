@@ -10,6 +10,7 @@ import io
 from datetime import datetime
 from pptx import Presentation
 from docx import Document
+from bs4 import BeautifulSoup
 
 # 页面配置
 st.set_page_config(
@@ -64,16 +65,26 @@ st.markdown("""
 
 
 def extract_text_from_docx(file_bytes: bytes) -> str:
-    """从DOCX文件中提取纯文本"""
+    """从DOCX文件中提取纯文本，支持HTML格式的.doc文件"""
     try:
+        # 尝试作为DOCX读取
         doc = Document(io.BytesIO(file_bytes))
         full_text = []
         for para in doc.paragraphs:
             full_text.append(para.text)
         return '\n'.join(full_text)
-    except Exception as e:
-        st.error(f"无法读取DOCX文件: {str(e)}")
-        return ""
+    except:
+        # 如果失败，尝试作为HTML读取（.doc文件实际是HTML格式）
+        try:
+            html_content = file_bytes.decode('utf-8', errors='ignore')
+            soup = BeautifulSoup(html_content, 'html.parser')
+            body = soup.find('body')
+            if body:
+                return body.get_text(separator='\n')
+            return html_content
+        except Exception as e:
+            st.error(f"无法读取文件: {str(e)}")
+            return ""
 
 
 def extract_text_from_txt(file_bytes: bytes) -> str:
@@ -217,7 +228,7 @@ if st.button("🚀 开始处理"):
                 # 读取逐字稿
                 script_content = script_file.read()
                 
-                if script_file.name.endswith('.docx'):
+                if script_file.name.endswith('.docx') or script_file.name.endswith('.doc'):
                     script_text = extract_text_from_docx(script_content)
                 else:
                     script_text = extract_text_from_txt(script_content)
